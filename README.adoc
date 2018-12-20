@@ -1,0 +1,390 @@
+:toc: macro
+
+image:https://travis-ci.org/objectiser/scribble-operator.svg?branch=master["Build Status", link="https://travis-ci.org/objectiser/scribble-operator"]
+image:https://goreportcard.com/badge/github.com/objectiser/scribble-operator["Go Report Card", link="https://goreportcard.com/report/github.com/objectiser/scribble-operator"]
+image:https://codecov.io/gh/objectiser/scribble-operator/branch/master/graph/badge.svg["Code Coverage", link="https://codecov.io/gh/objectiser/scribble-operator"]
+
+= Scribble Operator for Kubernetes
+toc::[]
+
+IMPORTANT: The Scribble Operator version is related to the version of the Scribble components (Query, Collector, Agent) up to the minor portion. The patch version portion does *not* follow the ones from the Scribble components. For instance, the Operator version 1.8.1 uses the Scribble Docker images tagged with version 1.8 by default.
+
+== Installing the operator
+
+=== Kubernetes
+
+NOTE: Make sure your `kubectl` command is properly configured to talk to a valid Kubernetes cluster. If you don't have one yet, check link:https://kubernetes.io/docs/tasks/tools/install-minikube/[`minikube`] out.
+
+To install the operator, run:
+
+[source,bash]
+----
+kubectl create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/crds/io_v1alpha1_jaeger_crd.yaml
+kubectl create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/service_account.yaml
+kubectl create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/role.yaml
+kubectl create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/role_binding.yaml
+kubectl create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/operator.yaml
+----
+
+At this point, there should be a `scribble-operator` deployment available:
+
+[source,bash]
+----
+$ kubectl get deployment scribble-operator
+NAME              DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+scribble-operator   1         1         1            1           48s
+----
+
+The operator is now ready to create Scribble instances!
+
+=== OpenShift
+
+The instructions from the previous section also work on OpenShift given that the `operator-openshift.yaml` is used instead of `operator.yaml`. Make sure to install the RBAC rules, the CRD and the operator as a privileged user, such as `system:admin`.
+
+[source,bash]
+----
+oc login -u system:admin
+
+oc create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/crds/io_v1alpha1_jaeger_crd.yaml
+oc create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/service_account.yaml
+oc create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/role.yaml
+oc create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/role_binding.yaml
+oc create -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/operator-openshift.yaml
+----
+
+Once the operator is installed, grant the role `scribble-operator` to users who should be able to install individual Scribble instances. The following example creates a role binding allowing the user `developer` to create Scribble instances:
+
+[source,bash]
+----
+oc create \
+  rolebinding developer-scribble-operator \
+  --role=scribble-operator \
+  --user=developer
+----
+
+After the role is granted, switch back to a non-privileged user.
+
+== Creating a new Scribble instance
+
+Example custom resources, for different configurations of Scribble, can be found https://github.com/objectiser/scribble-operator/tree/master/deploy/examples[here].
+
+The simplest possible way to install is by creating a YAML file like the following:
+
+.simplest.yaml
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: simplest
+----
+
+The YAML file can then be used with `kubectl`:
+[source,bash]
+----
+kubectl apply -f simplest.yaml
+----
+
+In a few seconds, a new in-memory all-in-one instance of Scribble will be available, suitable for quick demos and development purposes. To check the instances that were created, list the `jaeger` objects:
+
+[source,bash]
+----
+$ kubectl get jaeger
+NAME        CREATED AT
+simplest    28s
+----
+
+To get the pod name, query for the pods belonging to the `simplest` Scribble  instance:
+
+[source,bash]
+----
+$ kubectl get pods -l jaeger=simplest
+NAME                        READY     STATUS    RESTARTS   AGE
+simplest-6499bb6cdd-kqx75   1/1       Running   0          2m
+----
+
+Similarly, the logs can be queried either from the pod directly using the pod name obtained from the previous example, or from all pods belonging to our instance:
+
+[source,bash]
+----
+$ kubectl logs -l jaeger=simplest 
+...
+{"level":"info","ts":1535385688.0951214,"caller":"healthcheck/handler.go:133","msg":"Health Check state change","status":"ready"}
+----
+
+For reference, here's how a more complex all-in-one instance can be created:
+
+.all-in-one.yaml
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: my-jaeger
+spec:
+  strategy: allInOne # <1>
+  allInOne:
+    image: objectiser/all-in-one:1.8 # <2>
+    options: # <3>
+      log-level: debug # <4>
+  storage:
+    type: memory # <5>
+    options: # <6>
+      memory: # <7>
+        max-traces: 100000
+  ingress:
+    enabled: false # <8>
+  agent:
+    strategy: DaemonSet # <9>
+  annotations:
+    scheduler.alpha.kubernetes.io/critical-pod: "" # <10>
+----
+<1> The default strategy is `allInOne`. The only other possible value is `production`.
+<2> The image to use, in a regular Docker syntax
+<3> The (non-storage related) options to be passed verbatim to the underlying binary. Refer to the Scribble documentation and/or to the `--help` option from the related binary for all the available options.
+<4> The option is a simple `key: value` map. In this case, we want the option `--log-level=debug` to be passed to the binary.
+<5> The storage type to be used. By default it will be `memory`, but can be any other supported storage type (e.g. elasticsearch, cassandra, kafka, etc).
+<6> All storage related options should be placed here, rather than under the 'allInOne' or other component options.
+<7> Some options are namespaced and we can alternatively break them into nested objects. We could have specified `memory.max-traces: 100000`.
+<8> By default, an ingress object is created for the query service. It can be disabled by setting its `enabled` option to `false`. If deploying on OpenShift, this will be represented by a Route object.
+<9> By default, the operator assumes that agents are deployed as sidecars within the target pods. Specifying the strategy as "DaemonSet" changes that and makes the operator deploy the agent as DaemonSet. Note that your tracer client will probably have to override the "JAEGER_AGENT_HOST" env var to use the node's IP.
+<10> Define annotations to be applied to all deployments (not services). These can be overridden by annotations defined on the individual components.
+
+== Accessing the UI
+
+=== Kubernetes
+
+The operator creates a Kubernetes link:https://kubernetes.io/docs/concepts/services-networking/ingress/[`ingress`] route, which is the Kubernetes' standard for exposing a service to the outside world, but it comes with no Ingress providers by default. link:https://kubernetes.github.io/ingress-nginx/deploy/#verify-installation[Check the documentation] on what's the most appropriate way to achieve that for your platform, but the following commands should provide a good start on `minikube`:
+
+[source,bash]
+----
+minikube addons enable ingress
+----
+
+Once that is done, the UI can be found by querying the Ingress object:
+
+[source,bash]
+----
+$ kubectl get ingress
+NAME             HOSTS     ADDRESS          PORTS     AGE
+simplest-query   *         192.168.122.34   80        3m
+----
+
+IMPORTANT: an `Ingress` object is *not* created when the operator is started with the `--platform=openshift` flag, such as when using the resource `operator-openshift.yaml`.
+
+In this example, the Scribble UI is available at http://192.168.122.34
+
+=== OpenShift
+
+When using the `operator-openshift.yaml` resource, the Operator will automatically create a `Route` object for the query services. Check the hostname/port with the following command:
+
+[source,bash]
+----
+oc get routes
+----
+
+NOTE: make sure to use `https` with the hostname/port you get from the command above, otherwise you'll see a message like: "Application is not available".
+
+By default, the Scribble UI is protected with OpenShift's OAuth service and any valid user is able to login. For development purposes, the user/password combination `developer/developer` can be used. To disable this feature and leave the Scribble UI unsecured, set the Ingress property `security` to `none`:
+
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: disable-oauth-proxy
+spec:
+  ingress:
+    security: none
+----
+
+== Auto injection of Scribble Agent sidecars
+
+The operator can also inject Scribble Agent sidecars in `Deployment` workloads, provided that the deployment has the annotation `inject-jaeger-agent` with a suitable value. The values can be either `"true"` (as string), or the Scribble instance name, as returned by `kubectl get jaegers`. When `"true"` is used, there should be exactly *one* Scribble instance for the same namespace as the deployment, otherwise, the operator can't figure out automatically which Scribble instance to use.
+
+The following snippet shows a simple application that will get a sidecar injected, with the Scribble Agent pointing to the single Scribble instance available in the same namespace:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+  annotations:
+    inject-jaeger-agent: "true" # <1>
+spec:
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+      - name: myapp
+        image: acme/myapp:myversion
+----
+<1> Either `"true"` (as string) or the Scribble instance name
+
+== Agent as DaemonSet
+
+By default, the Operator expects the agents to be deployed as sidecars to the target applications. This is convenient for several purposes, like in a multi-tenant scenario or to have better load balancing, but there are scenarios where it's desirable to install the agent as a `DaemonSet`. In that case, specify the Agent's strategy to `DaemonSet`, as follows:
+
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: my-jaeger
+spec:
+  agent:
+    strategy: DaemonSet
+----
+
+IMPORTANT: if you attempt to install two Scribble instances on the same cluster with `DaemonSet` as the strategy, only *one* will end up deploying a `DaemonSet`, as the agent is required to bind to well-known ports on the node. Because of that, the second daemon set will fail to bind to those ports.
+
+Your tracer client will then most likely need to be told where the agent is located. This is usually done by setting the env var `JAEGER_AGENT_HOST` and should be set to the value of the Kubernetes node's IP, like:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp
+spec:
+  selector:
+    matchLabels:
+      app: myapp
+  template:
+    metadata:
+      labels:
+        app: myapp
+    spec:
+      containers:
+      - name: myapp
+        image: acme/myapp:myversion
+        env:
+        - name: JAEGER_AGENT_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+----
+
+== Secrets support
+
+The Operator supports passing secrets to the Collector, Query and All-In-One deployments. This can be used for example, to pass credentials (username/password) to access the underlying storage backend (for ex: Elasticsearch).
+The secrets are available as environment variables in the (Collector/Query/All-In-One) nodes.
+
+[source,yaml]
+----
+    storage:
+      type: elasticsearch
+      options:
+        es:
+          server-urls: http://elasticsearch:9200
+      secretName: jaeger-secrets
+----
+
+The secret itself would be managed outside of the `scribble-operator` CR.
+
+== Define sampling strategies
+
+The operator can be used to define sampling strategies that will be supplied to tracers that have been configured
+to use a remote sampler:
+
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: with-sampling
+spec:
+  strategy: allInOne
+  sampling:
+    options:
+      default_strategy:
+        type: probabilistic
+        param: 50
+----
+
+This example defines a default sampling strategy that is probabilistic, with a 50% chance of the trace instances being
+sampled.
+
+Refer to the Scribble documentation on link:https://www.objectiser.io/docs/1.8/sampling/#collector-sampling-configuration[Collector Sampling Configuration] to see how service and endpoint sampling can be configured. The JSON representation described in that documentation can be used in the operator by converting to YAML.
+
+== Schema migration
+
+=== Cassandra
+
+When the storage type is set to Cassandra, the operator will automatically create a batch job that creates the required schema for Scribble to run. This batch job will block the Scribble installation, so that it starts only after the schema is successfuly created. The creation of this batch job can be disabled by setting the `enabled` property to `false`:
+
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: cassandra-without-create-schema
+spec:
+  strategy: allInOne
+  storage:
+    type: cassandra
+    cassandraCreateSchema:
+      enabled: false # <1>
+----
+<1> Defaults to `true`
+
+Further aspects of the batch job can be configured as well. An example with all the possible options is shown below:
+
+[source,yaml]
+----
+apiVersion: io.objectiser/v1alpha1
+kind: Scribble
+metadata:
+  name: cassandra-with-create-schema
+spec:
+  strategy: allInOne # <1>
+  storage:
+    type: cassandra
+    options: # <2>
+      cassandra:
+        servers: cassandra
+        keyspace: jaeger_v1_datacenter3
+    cassandraCreateSchema: # <3>
+      datacenter: "datacenter3"
+      mode: "test"
+----
+<1> The same works for `production`
+<2> These options are for the regular Scribble components, like `collector` and `query`
+<3> The options for the `create-schema` job
+
+NOTE: the default create-schema job uses `MODE=prod`, which implies a replication factor of `2`, using `NetworkTopologyStrategy` as the class, effectively meaning that at least 3 nodes are required in the Cassandra cluster. If a `SimpleStrategy` is desired, set the mode to `test`, which then sets the replication factor of `1`. Refer to the link:https://github.com/objectiser/jaeger/blob/v1.8.0/plugin/storage/cassandra/schema/create.sh[create-schema script] for more details.
+
+== Removing an instance
+
+To remove an instance, just use the `delete` command with the file used for the instance creation:
+[source,bash]
+----
+kubectl delete -f simplest.yaml
+----
+
+Alternatively, you can remove a Scribble instance by running:
+[source,bash]
+----
+kubectl delete jaeger simplest
+----
+
+NOTE: deleting the instance will not remove the data from a permanent storage used with this instance. Data from in-memory instances, however, will be lost.
+
+== Uninstalling the operator
+
+Similar to the installation, just run:
+
+[source,bash]
+----
+kubectl delete -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/operator.yaml
+kubectl delete -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/role_binding.yaml
+kubectl delete -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/role.yaml
+kubectl delete -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/service_account.yaml
+kubectl delete -f https://raw.githubusercontent.com/objectiser/scribble-operator/master/deploy/crds/io_v1alpha1_jaeger_crd.yaml
+----

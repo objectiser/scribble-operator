@@ -1,0 +1,42 @@
+language: go
+sudo: required
+
+go:
+- 1.11.1
+
+stages:
+  - name: build
+  - name: deploy
+    # only deploy if:
+    ## we are not in a PR
+    ## tag is blank (ie, master or any other branch)
+    ## tag is a release tag (release/v1.6.1, which is the release build)
+    if: (type != pull_request) AND ((tag IS blank) OR (tag =~ /^release\/v.[\d\.]+(\-.*)?$/))
+
+jobs:
+  include:
+    - stage: build
+      env:
+      - OPERATOR_VERSION="JOB_${TRAVIS_JOB_NUMBER}"
+      name: "Build"
+      install:
+      - "./.travis/install.sh"
+      script:
+      - "./.travis/script.sh"
+      after_success:
+      - "./.travis/after_success.sh"
+
+    - stage: deploy
+      name: "Publish latest image"
+      env:
+      - OPERATOR_VERSION="${TRAVIS_BRANCH}"
+      script:
+      - "./.travis/publish-images.sh"
+
+    - stage: deploy
+      name: "Release"
+      env:
+      - OPERATOR_VERSION="${TRAVIS_BRANCH}"
+      script:
+      - "./.travis/release.sh"
+      if: tag =~ /^release\/v.[\d\.]+(\-.*)?$/

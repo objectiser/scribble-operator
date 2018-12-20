@@ -1,0 +1,8 @@
+apiVersion: org.scribble/v1alpha1
+kind: Scribble
+metadata:
+  name: helloworld
+  # Possibly call the element "protocol"
+spec:
+  # Service bindings - could be defined with the role
+  name: hello

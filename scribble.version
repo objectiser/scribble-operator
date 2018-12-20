@@ -1,0 +1,5 @@
+# this file contains the version of the Scribble components that will be used
+# by default with the Scribble Operator. This would usually be the latest 
+# stable Scribble version. When you update this file, make sure to update the
+# the docs as well.
+1.0

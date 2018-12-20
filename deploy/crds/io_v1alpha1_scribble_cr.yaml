@@ -1,0 +1,5 @@
+# see /examples
+apiVersion: org.scribble/v1alpha1
+kind: Scribble
+metadata:
+  name: example-scribble

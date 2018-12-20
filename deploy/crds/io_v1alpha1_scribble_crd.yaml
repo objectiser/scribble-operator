@@ -1,0 +1,13 @@
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: scribble.org
+spec:
+  group: org.scribble
+  names:
+    kind: Scribble
+    listKind: ScribbleList
+    plural: scribbles
+    singular: scribble
+  scope: Namespaced
+  version: v1alpha1
